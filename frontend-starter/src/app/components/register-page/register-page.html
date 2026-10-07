@@ -1,0 +1,37 @@
+<section class="card">
+  <h1>Créer un compte</h1>
+  <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+    <label>
+      Nom
+      <input formControlName="name" required minlength="2" [attr.aria-invalid]="form.controls.name.touched && form.controls.name.invalid" />
+      @if (form.controls.name.touched && form.controls.name.hasError('required')) {
+        <span class="error" role="alert">Le nom est obligatoire.</span>
+      } @else if (form.controls.name.touched && form.controls.name.hasError('minlength')) {
+        <span class="error" role="alert">Le nom doit contenir au moins 2 caractères.</span>
+      }
+    </label>
+    <label>
+      Email
+      <input type="email" formControlName="email" required [attr.aria-invalid]="form.controls.email.touched && form.controls.email.invalid" />
+      @if (form.controls.email.touched && form.controls.email.hasError('required')) {
+        <span class="error" role="alert">L’adresse e-mail est obligatoire.</span>
+      } @else if (form.controls.email.touched && form.controls.email.hasError('email')) {
+        <span class="error" role="alert">Saisissez une adresse e-mail valide.</span>
+      }
+    </label>
+    <label>
+      Mot de passe
+      <input type="password" formControlName="password" required minlength="8" [attr.aria-invalid]="form.controls.password.touched && form.controls.password.invalid" />
+      @if (form.controls.password.touched && form.controls.password.hasError('required')) {
+        <span class="error" role="alert">Le mot de passe est obligatoire.</span>
+      } @else if (form.controls.password.touched && form.controls.password.hasError('minlength')) {
+        <span class="error" role="alert">Le mot de passe doit contenir au moins 8 caractères.</span>
+      }
+    </label>
+    <button type="submit">Créer mon compte</button>
+  </form>
+  @if (error()) {
+    <p class="error" role="alert">{{ error() }}</p>
+  }
+  <p><a routerLink="/login">Déjà inscrit ?</a></p>
+</section>

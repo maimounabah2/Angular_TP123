@@ -1,0 +1,26 @@
+<section class="card">
+  <h1>Connexion</h1>
+  <form [formGroup]="form" (ngSubmit)="submit()">
+    <label>
+      Email
+      <input type="email" formControlName="email" required [attr.aria-invalid]="form.controls.email.touched && form.controls.email.invalid" />
+      @if (form.controls.email.touched && form.controls.email.hasError('required')) {
+        <span class="error">L’adresse e-mail est obligatoire.</span>
+      } @else if (form.controls.email.touched && form.controls.email.hasError('email')) {
+        <span class="error">Saisissez une adresse e-mail valide.</span>
+      }
+    </label>
+    <label>
+      Mot de passe
+      <input type="password" formControlName="password" required [attr.aria-invalid]="form.controls.password.touched && form.controls.password.invalid" />
+      @if (form.controls.password.touched && form.controls.password.hasError('required')) {
+        <span class="error">Le mot de passe est obligatoire.</span>
+      }
+    </label>
+    <button type="submit">Se connecter</button>
+  </form>
+  @if (error()) {
+    <p class="error" role="alert">{{ error() }}</p>
+  }
+  <p><a routerLink="/register">Créer un compte</a></p>
+</section>

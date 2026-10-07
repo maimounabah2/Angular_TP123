@@ -1,0 +1,32 @@
+<section class="card">
+  <h1>Mon profil</h1>
+  @if (loading()) {
+    <p role="status">Chargement du profil…</p>
+  }
+  @if (error()) {
+    <p class="error" role="alert">{{ error() }}</p>
+  }
+  @if (success()) {
+    <p role="status">{{ success() }}</p>
+  }
+  @if (auth.currentUser(); as user) {
+    <p>
+      <b>{{ user.name }}</b><br />{{ user.email }}<br />
+      Membre depuis {{ user.createdAt.slice(0, 10) }}
+    </p>
+    <form [formGroup]="form" (ngSubmit)="save()" novalidate>
+      <label>
+        Nouveau nom
+        <input formControlName="name" required minlength="2" [attr.aria-invalid]="form.controls.name.touched && form.controls.name.invalid" />
+        @if (form.controls.name.touched && form.controls.name.hasError('required')) {
+          <span class="error">Le nom est obligatoire.</span>
+        } @else if (form.controls.name.touched && form.controls.name.hasError('minlength')) {
+          <span class="error">Le nom doit contenir au moins 2 caractères.</span>
+        }
+      </label>
+      <button type="submit" [disabled]="saving()">
+        {{ saving() ? 'Enregistrement…' : 'Enregistrer' }}
+      </button>
+    </form>
+  }
+</section>

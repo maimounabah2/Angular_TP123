@@ -159,3 +159,94 @@ La capture ne montre pas le JWT. Elle constitue une preuve visuelle de la requê
 ### Remarque personnelle
 
 Cette mission m’a permis de consolider le parcours utilisateur Angular, des validations de formulaire jusqu’à la lecture et à la modification du profil par l’API.
+
+## TP2 — Bibliothèque, upload et lecture audio
+
+### Outil et modèle d’IA utilisés
+
+- Agent IA : Copilot dans Visual Studio Code (assistant IA utilisant le Copilot SDK).
+- Modèle utilisé pendant cette étape : gpt-6-luna.
+
+### Objectif
+
+Compléter le frontend de la bibliothèque audio sans modifier le backend ni le contrat HTTP : pagination serveur avec Angular Material, cards accessibles, validation et suivi de l’upload, lecture authentifiée, suppression avec confirmation et filtre par titre.
+
+### Prompts principaux
+
+- « Lis les fichiers du flux audio et explique le choix du fichier, le `FormData`, les requêtes HTTP, le `Blob`, l’`ObjectURL` et l’intercepteur JWT. »
+- « Complète les éléments manquants dans le frontend, sans modifier le backend, et attends ma vérification après chaque étape. »
+- « Utilise le composant Paginator d’Angular Material. »
+- « Ajoute la suppression avec confirmation, le rafraîchissement, le filtre par titre et la progression de l’upload. »
+
+### Modifications réalisées
+
+- **Pagination serveur :** les pistes sont demandées avec `page` et `limit` dans `TrackService.list()`. Le composant Paginator d’Angular Material déclenche une nouvelle requête lors d’un changement de page ou de taille. Les données ne sont pas découpées localement.
+- **Cards de bibliothèque :** présentation responsive et accessible du titre, du nom original lorsqu’il diffère, du format, de la taille convertie depuis les octets et de la date au format français. Le morceau en cours est mis en évidence ; les contrôles de lecture et de suppression ont des libellés accessibles.
+- **Filtre :** un bouton SVG ouvre le champ de recherche et lui donne le focus. La recherche porte sur le titre de la page courante et ignore les majuscules et les accents. Un bouton efface la recherche.
+- **Upload :** contrôle du format et de la limite de 25 Mo côté frontend, messages compréhensibles, protection contre les soumissions répétées, progression lorsque le navigateur fournit le pourcentage, confirmation de succès, remise à zéro du formulaire et rechargement de la première page.
+- **Suppression :** appel de `DELETE /api/tracks/:id` après confirmation, message de retour et actualisation de la liste après succès. Si la dernière piste d’une page est supprimée, la page précédente est rechargée.
+- **Lecture audio :** affichage du morceau chargé et des erreurs de chargement ou de lecture. L’ancienne `ObjectURL` est révoquée lors du remplacement du lecteur et l’URL finale à la destruction du composant.
+- **Messages de succès :** les confirmations d’upload et de suppression disparaissent après environ quatre secondes ou dès une nouvelle action ; le minuteur est nettoyé à la destruction du composant.
+- Le filtre, l’upload, la pagination, la lecture et la suppression restent dans le frontend. Aucun endpoint, schéma de données ou comportement backend n’a été modifié.
+
+### Fichiers effectivement modifiés pour le TP2
+
+- `frontend-starter/src/app/components/tracks-page/tracks-page.ts`
+- `frontend-starter/src/app/components/tracks-page/tracks-page.html`
+- `frontend-starter/src/app/components/tracks-page/tracks-page.css`
+- `frontend-starter/src/app/shared/services/track.service.ts`
+- `frontend-starter/src/main.ts`
+- `frontend-starter/package.json`
+- `frontend-starter/package-lock.json`
+
+### Vérifications réalisées
+
+- `npm run build` dans `frontend-starter` : compilation Angular réussie après les changements.
+- Diagnostics ciblés du template et du composant : aucune erreur signalée.
+- Sélection d’un fichier PDF : le frontend affiche le message de format non accepté et bloque l’envoi.
+- Arrêt du backend puis actualisation de la page : le frontend affiche un message d’erreur de chargement au lieu de présenter l’état vide comme si aucune piste n’existait.
+- Une capture existante montre la requête multipart `POST /api/tracks` avec le statut `201 Created`. Une autre montre le refus d’un fichier au format non accepté.
+- Les captures existantes ont été prises avant la dernière finition visuelle des cards ; elles ne représentent donc pas nécessairement la présentation finale.
+
+### Preuves disponibles
+
+#### Upload réussi dans Network
+
+La capture montre une requête `POST /api/tracks` retournant `201 Created`.
+
+![Upload réussi dans Network](./Images/upload_succes.png)
+
+#### Refus d’un format non accepté
+
+La capture montre le message frontend affiché après la sélection d’un fichier non accepté.
+
+![Format audio refusé](./Images/upload_format_refus%C3%A9.png)
+
+#### Erreur lorsque le serveur est indisponible
+
+![Erreur de chargement lorsque le serveur est indisponible](./Images/erreur_de_chargement_des_fichiers_serveur_injoignable.png)
+
+### Explications techniques
+
+- **Flux d’upload :** le composant `tracks-page.ts`, dans `choose()`, reçoit le fichier sélectionné et le valide. `upload()` appelle ensuite `TrackService.upload()`. Dans `track.service.ts`, le service construit un `FormData` avec exactement les champs `audio` et `title`, puis effectue le `POST /api/tracks`. Le serveur vérifie le fichier et enregistre le fichier et ses métadonnées.
+- **Flux de lecture :** `play(track)` dans `tracks-page.ts` appelle `TrackService.audio(track.id)`. Le service utilise `HttpClient` avec `responseType: 'blob'`. L’intercepteur ajoute le JWT à cette requête HttpClient. Après la réponse, le composant crée une URL locale avec `URL.createObjectURL(blob)` et la fournit à la balise `<audio>`.
+- **Pourquoi pas une URL directement dans `src` ?** Une requête lancée par le navigateur depuis l’élément `<audio>` ne passe pas par l’intercepteur Angular ; elle ne reçoit donc pas automatiquement le header `Authorization` ajouté par celui-ci.
+- **Validation frontend et backend :** les vérifications côté frontend permettent d’informer rapidement l’utilisateur et d’éviter une requête inutile. Elles ne sont pas une protection : un client peut être contourné. La validation backend reste indispensable.
+
+### Réponses aux questions sur mémoire, buffering et streaming
+
+- **Le backend doit-il charger tout le fichier en mémoire ?** Non. La route `GET /api/tracks/:id/audio` retrouve le chemin du fichier puis appelle `res.sendFile(audioPath)`. Express peut transférer le fichier depuis le disque progressivement au lieu de charger son contenu entier dans un grand tampon JavaScript.
+- **Quand le composant reçoit-il le `Blob` ?** Avec `HttpClient` et `responseType: 'blob'`, le composant reçoit généralement la réponse `Blob` lorsque le corps complet de cette réponse a été téléchargé. Il crée ensuite l’`ObjectURL` pour le lecteur.
+- **Les 100 morceaux audio sont-ils téléchargés avec la liste ?** Non. `GET /api/tracks` renvoie les métadonnées paginées ; les données audio sont demandées séparément par `GET /api/tracks/:id/audio` lorsqu’on choisit une piste.
+- **Quelle différence avec 100 éléments `<audio>` ayant directement une URL ?** Chaque élément pourrait déclencher sa propre requête audio, suivant le comportement de chargement et de prélecture du navigateur ; cela multiplierait les requêtes et pourrait accroître le trafic. Dans cette application, un clic explicite déclenche plutôt le téléchargement du seul morceau choisi sous forme de `Blob`.
+- **Pourquoi révoquer l’`ObjectURL` ?** L’URL créée par `URL.createObjectURL()` maintient une référence aux données du `Blob`. `URL.revokeObjectURL()` libère cette ressource lorsque le lecteur est remplacé ou détruit.
+- **Téléchargement, buffering et streaming :** le téléchargement du `Blob` via `HttpClient` attend généralement que le fichier audio soit entièrement reçu avant que le composant puisse le donner au lecteur. Le buffering du navigateur consiste à accumuler des données pour permettre une lecture fluide. Le streaming permet de recevoir et lire progressivement des données pendant que le transfert continue ; l’utilisation actuelle d’un `Blob` via `HttpClient` n’offre pas cette lecture progressive au lecteur.
+
+### Points restant à capturer pour la remise
+
+- La capture Network d’un changement de page montrant le paramètre `page` (et éventuellement `limit`) transmis à `GET /api/tracks`.
+- Une capture Network ou une démonstration confirmant la réussite d’une lecture audio authentifiée. La capture actuelle `erreur_lecture_audio.png` montre une réponse `502` et ne constitue pas une preuve de lecture réussie.
+
+### Remarque personnelle
+
+Ce TP m’a permis de comprendre que la pagination est effectuée côté serveur, que les métadonnées et les octets audio sont récupérés par des requêtes distinctes, et que le `Blob`/`ObjectURL` permet au lecteur de consommer une réponse audio authentifiée avec le JWT.

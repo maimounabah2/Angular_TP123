@@ -3,6 +3,7 @@ import { Component, computed, ElementRef, inject, OnDestroy, signal, ViewChild }
 import { HttpErrorResponse, HttpEventType } from '@angular/common/http';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatPaginatorIntl, MatPaginatorModule, PageEvent } from '@angular/material/paginator';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
 import { Track } from '../../shared/models/track.model';
 import { TrackService } from '../../shared/services/track.service';
@@ -26,7 +27,7 @@ function normalizeSearchText(value: string): string {
 }
 
 @Component({
-  imports: [DatePipe, MatPaginatorModule, ReactiveFormsModule],
+  imports: [DatePipe, MatPaginatorModule, MatSnackBarModule, ReactiveFormsModule],
   providers: [
     {
       provide: MatPaginatorIntl,
@@ -52,6 +53,7 @@ function normalizeSearchText(value: string): string {
 })
 export class TracksPageComponent implements OnDestroy {
   private readonly service = inject(TrackService);
+  private readonly snackBar = inject(MatSnackBar);
   private audioRequest?: Subscription;
   private successMessageTimer?: ReturnType<typeof setTimeout>;
 
@@ -74,8 +76,6 @@ export class TracksPageComponent implements OnDestroy {
   readonly uploadSuccess = signal('');
   readonly uploading = signal(false);
   readonly uploadProgress = signal<number | null>(null);
-  readonly deleteError = signal('');
-  readonly deleteSuccess = signal('');
   readonly deletingTrackId = signal<string | null>(null);
   readonly audioUrl = signal('');
   readonly currentTrack = signal<Track | null>(null);
@@ -186,14 +186,14 @@ export class TracksPageComponent implements OnDestroy {
         if (this.tracks().length === 1 && this.page() > 1) {
           this.page.update((page) => page - 1);
         }
-        this.showSuccessMessage('delete', `La piste ${track.title} a été supprimée.`);
+        this.showDeleteMessage(`La piste ${track.title} a été supprimée.`, 'polite');
         this.deletingTrackId.set(null);
         this.load();
       },
       error: (error: HttpErrorResponse) => {
         const message = this.getDeleteErrorMessage(error);
         console.error('[TracksPage] Suppression impossible:', message);
-        this.deleteError.set(message);
+        this.showDeleteMessage(message, 'assertive');
         this.deletingTrackId.set(null);
         if (error.status >= 500) this.load();
       },
@@ -257,7 +257,7 @@ export class TracksPageComponent implements OnDestroy {
           this.title.setValue('');
           this.file = undefined;
           if (this.fileInput) this.fileInput.value = '';
-          this.showSuccessMessage('upload', 'Le fichier audio a été envoyé avec succès.');
+          this.showUploadSuccessMessage('Le fichier audio a été envoyé avec succès.');
           this.uploading.set(false);
           this.uploadProgress.set(null);
           this.page.set(1);
@@ -378,25 +378,28 @@ export class TracksPageComponent implements OnDestroy {
 
   private clearActionMessages(): void {
     this.clearSuccessMessageTimer();
+    this.snackBar.dismiss();
     this.uploadSuccess.set('');
-    this.deleteSuccess.set('');
     this.uploadError.set('');
-    this.deleteError.set('');
     this.loadError.set('');
     this.audioError.set('');
   }
 
-  private showSuccessMessage(type: 'upload' | 'delete', message: string): void {
+  private showUploadSuccessMessage(message: string): void {
     this.clearSuccessMessageTimer();
     this.uploadSuccess.set('');
-    this.deleteSuccess.set('');
-    if (type === 'upload') this.uploadSuccess.set(message);
-    else this.deleteSuccess.set(message);
+    this.uploadSuccess.set(message);
     this.successMessageTimer = setTimeout(() => {
       this.uploadSuccess.set('');
-      this.deleteSuccess.set('');
       this.successMessageTimer = undefined;
     }, 4000);
+  }
+
+  private showDeleteMessage(message: string, politeness: 'polite' | 'assertive'): void {
+    this.snackBar.open(message, undefined, {
+      duration: 4000,
+      politeness,
+    });
   }
 
   private clearSuccessMessageTimer(): void {

@@ -69,12 +69,6 @@
           <button type="button" (click)="refresh()">Actualiser</button>
         </div>
       </div>
-      @if (deleteError()) {
-        <p class="error" role="alert">{{ deleteError() }}</p>
-      }
-      @if (deleteSuccess()) {
-        <p role="status" aria-live="polite">{{ deleteSuccess() }}</p>
-      }
       @if (loading()) {
         <p role="status">Chargement des pistes…</p>
       }

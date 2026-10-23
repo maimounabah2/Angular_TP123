@@ -20,13 +20,13 @@ tests → services/composants isolés → réponses HTTP simulées
 
 ## Déroulement conseillé
 
-| Temps | Activité | Production attendue |
-|---|---|---|
-| 0:00–0:15 | Lecture du code et des tests existants | manques identifiés |
-| 0:15–0:50 | Suppression d’une piste | suppression confirmée et interface rafraîchie |
-| 0:50–1:20 | Progression de l’upload | pourcentage et états visibles |
-| 1:20–1:50 | Tests automatisés | tests reproductibles |
-| 1:50–2:00 | Build, Network et restitution | preuves finales |
+| Temps     | Activité                               | Production attendue                           |
+| --------- | -------------------------------------- | --------------------------------------------- |
+| 0:00–0:15 | Lecture du code et des tests existants | manques identifiés                            |
+| 0:15–0:50 | Suppression d’une piste                | suppression confirmée et interface rafraîchie |
+| 0:50–1:20 | Progression de l’upload                | pourcentage et états visibles                 |
+| 1:20–1:50 | Tests automatisés                      | tests reproductibles                          |
+| 1:50–2:00 | Build, Network et restitution          | preuves finales                               |
 
 ## Mission 5 — Suppression d’une piste
 

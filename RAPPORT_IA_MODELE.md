@@ -1,4 +1,4 @@
-# Rapport d'usage de l'IA - TP1
+# Rapport d'usage de l'IA - TP1 et TP2
 
 ## Mission 0 — Cartographier l’application
 
@@ -206,6 +206,8 @@ Compléter le frontend de la bibliothèque audio sans modifier le backend ni le 
 - Sélection d’un fichier PDF : le frontend affiche le message de format non accepté et bloque l’envoi.
 - Arrêt du backend puis actualisation de la page : le frontend affiche un message d’erreur de chargement au lieu de présenter l’état vide comme si aucune piste n’existait.
 - Une capture existante montre la requête multipart `POST /api/tracks` avec le statut `201 Created`. Une autre montre le refus d’un fichier au format non accepté.
+- Une capture Network montre une requête `GET /api/tracks?page=28&limit=5`, confirmant que les paramètres de pagination sont transmis à l’API.
+- Une capture montre le lecteur avec un morceau en cours de lecture ; une autre montre la réponse `200 OK` de la requête audio avec `Content-Type: audio/mpeg`.
 - Les captures existantes ont été prises avant la dernière finition visuelle des cards ; elles ne représentent donc pas nécessairement la présentation finale.
 
 ### Preuves disponibles
@@ -226,6 +228,20 @@ La capture montre le message frontend affiché après la sélection d’un fichi
 
 ![Erreur de chargement lorsque le serveur est indisponible](./Images/erreur_de_chargement_des_fichiers_serveur_injoignable.png)
 
+#### Pagination serveur dans Network
+
+La requête affiche `GET /api/tracks?page=28&limit=5`.
+
+![Pagination serveur dans Network](./Images/lecture_audio_reussi.png)
+
+#### Lecture audio en cours
+
+Le lecteur affiche le morceau en lecture. La capture Network associée montre aussi une réponse `200 OK` et le type audio `audio/mpeg`.
+
+![Lecture audio en cours](./Images/lecture_audio.png)
+
+![Réponse audio réussie dans Network](./Images/pagination.png)
+
 ### Explications techniques
 
 - **Flux d’upload :** le composant `tracks-page.ts`, dans `choose()`, reçoit le fichier sélectionné et le valide. `upload()` appelle ensuite `TrackService.upload()`. Dans `track.service.ts`, le service construit un `FormData` avec exactement les champs `audio` et `title`, puis effectue le `POST /api/tracks`. Le serveur vérifie le fichier et enregistre le fichier et ses métadonnées.
@@ -242,10 +258,6 @@ La capture montre le message frontend affiché après la sélection d’un fichi
 - **Pourquoi révoquer l’`ObjectURL` ?** L’URL créée par `URL.createObjectURL()` maintient une référence aux données du `Blob`. `URL.revokeObjectURL()` libère cette ressource lorsque le lecteur est remplacé ou détruit.
 - **Téléchargement, buffering et streaming :** le téléchargement du `Blob` via `HttpClient` attend généralement que le fichier audio soit entièrement reçu avant que le composant puisse le donner au lecteur. Le buffering du navigateur consiste à accumuler des données pour permettre une lecture fluide. Le streaming permet de recevoir et lire progressivement des données pendant que le transfert continue ; l’utilisation actuelle d’un `Blob` via `HttpClient` n’offre pas cette lecture progressive au lecteur.
 
-### Points restant à capturer pour la remise
-
-- La capture Network d’un changement de page montrant le paramètre `page` (et éventuellement `limit`) transmis à `GET /api/tracks`.
-- Une capture Network ou une démonstration confirmant la réussite d’une lecture audio authentifiée. La capture actuelle `erreur_lecture_audio.png` montre une réponse `502` et ne constitue pas une preuve de lecture réussie.
 
 ### Remarque personnelle
 

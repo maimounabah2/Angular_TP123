@@ -1,4 +1,4 @@
-# Rapport d'usage de l'IA - TP1 et TP2
+# Rapport d'usage de l'IA - TP1, TP2 et TP3
 
 ## Mission 0 — Cartographier l’application
 
@@ -262,3 +262,111 @@ Le lecteur affiche le morceau en lecture. La capture Network associée montre au
 ### Remarque personnelle
 
 Ce TP m’a permis de comprendre que la pagination est effectuée côté serveur, que les métadonnées et les octets audio sont récupérés par des requêtes distinctes, et que le `Blob`/`ObjectURL` permet au lecteur de consommer une réponse audio authentifiée avec le JWT.
+
+## TP3 — Suppression sécurisée et tests
+
+### Outil et modèle d’IA utilisés
+
+- Agent IA : Copilot dans Visual Studio Code (assistant IA utilisant le Copilot SDK).
+
+### Objectif
+
+Finaliser les retours utilisateur lors de la suppression d’une piste, vérifier la progression de l’upload, créer des tests frontend indépendants du backend, puis compléter les tests de contrat et de sécurité facultatifs du backend.
+
+### Prompts principaux
+
+- « Explique-moi la mission 7 avant de modifier le projet. »
+- « Écris au moins trois tests frontend qui vérifient les requêtes HTTP sans démarrer le backend ni MongoDB. »
+- « Fais la partie Extension backend. »
+
+### Modifications réalisées
+
+- **Retour lors de la suppression :** utilisation de `MatSnackBar` pour afficher les succès et erreurs de suppression. La confirmation, la protection contre les doubles clics et le rechargement de la liste sont conservés.
+- **Tests frontend :** ajout de deux tests pour `TrackService` (pagination et suppression) et d’un test pour l’intercepteur d’authentification. Ils utilisent `HttpTestingController` et des réponses simulées ; aucun backend ou MongoDB n’est requis.
+- **Environnement de tests Angular :** ajout de `jsdom` comme dépendance de développement. Ajout d’une configuration `development` dans `angular.json`, nécessaire parce que la cible `serve` la référence.
+- **Extension backend :** ajout de six tests de contrat et de sécurité dans `backend/test/api.test.js`. Les tests vérifient l’absence et l’invalidité du JWT, les uploads sans fichier et avec un type MIME interdit, les paramètres de pagination, et le refus de supprimer une piste appartenant à un autre utilisateur. Les accès Mongoose utilisés dans les tests de pagination et de propriété sont simulés ; le backend réel et MongoDB ne sont pas requis.
+- Les routes backend n’ont pas été modifiées.
+
+### Fichiers effectivement modifiés pour le TP3
+
+- `frontend-starter/src/app/components/tracks-page/tracks-page.ts`
+- `frontend-starter/src/app/components/tracks-page/tracks-page.html`
+- `frontend-starter/src/app/shared/services/track.service.spec.ts`
+- `frontend-starter/src/app/shared/interceptors/auth.interceptor.spec.ts`
+- `frontend-starter/angular.json`
+- `frontend-starter/package.json`
+- `frontend-starter/package-lock.json`
+- `backend/test/api.test.js`
+
+### Vérifications réalisées
+
+| Vérification | Résultat attendu | Résultat observé |
+|---|---|---|
+| Tests frontend (`npm test`) | Les trois tests ciblés passent sans backend ni MongoDB. | 3 tests réussis, 0 échec. |
+| Build frontend (`npm run build`) | Le frontend Angular compile. | Build réussi. |
+| Tests backend (`npm test` dans `backend`) | Les deux tests existants et les six nouveaux tests passent. | 8 tests réussis, 0 échec. |
+| Upload dans Network | Une requête `POST /api/tracks` réussit. | Upload réussi observé par l’étudiante. |
+| Suppression dans Network | Une requête `DELETE /api/tracks/:id` réussit après confirmation. | Suppression vérifiée par l’étudiante ; la piste disparaît de la liste. |
+| Console du navigateur | Pas d’erreur inattendue venant de l’application et pas de mot de passe/JWT journalisé. | Les messages rouges observés indiquent `chrome-extension://.../zotero.js` et proviennent de l’extension Zotero, pas de l’application. Aucun mot de passe ni JWT n’a été signalé. |
+
+#### Capture Network — upload réussi
+
+![Upload réussi dans Network](./Images/upload_succes.png)
+
+#### Capture Network — suppression
+
+![Suppression d’une piste dans Network](./Images/delete_piste.png)
+
+### Explications techniques retenues
+
+- La suppression passe par `TrackService` afin que le composant gère l’interface et que le service centralise les appels HTTP.
+- Le backend vérifie le JWT, puis recherche/supprime la piste avec son identifiant **et** l’identifiant du propriétaire provenant du JWT. Le guard Angular et l’interface ne remplacent pas cette vérification serveur.
+- La progression d’upload utilise les événements HTTP : lorsque les octets envoyés (`loaded`) et le total (`total`) sont disponibles, le pourcentage est calculé par `loaded / total × 100`. L’envoi terminé n’est pas encore la confirmation du serveur : il faut attendre la réponse finale.
+- Les tests frontend substituent une réponse simulée au backend. Ils vérifient les URL, méthodes, paramètres, headers et résultats du côté Angular, mais ne valident pas le fonctionnement réel de MongoDB.
+- Un test unitaire vérifie une partie isolée avec ses dépendances simulées ; un test d’intégration vérifie plusieurs parties ensemble, par exemple l’application, l’API et la base de données.
+
+### Remarque personnelle
+
+Cette étape m’a permis de distinguer les tests frontend avec HTTP simulé des tests backend de contrat, et de comprendre que la sécurité de la suppression doit être appliquée par le backend, même si l’interface et le guard limitent les actions accessibles à l’utilisateur.
+
+## TP2 — Améliorations complémentaires
+
+### Modifications réalisées
+
+- **Pagination Mongoose avancée :** ajout du plugin `mongoose-aggregate-paginate-v2` au modèle `Track`. La route des pistes construit une agrégation filtrée par propriétaire, triée par date et paginée par le plugin. Le backend conserve la réponse `items`, `page`, `limit`, `total`, `pages` déjà consommée par Angular.
+- **Métadonnées audio :** lecture locale des tags ID3 et formats pris en charge par `music-metadata` pour préremplir le titre et l’artiste. Si les tags ne fournissent pas de titre, le nom du fichier est proposé. Le fichier audio n’est pas envoyé au service de recherche.
+- **Couverture depuis l’appareil :** ajout d’une image JPEG, PNG ou WebP, limitée à 5 Mo. L’image est stockée avec un nom généré par le serveur et n’est récupérable que par une requête authentifiée appartenant au propriétaire de la piste.
+- **Couverture depuis le catalogue public :** recherche déclenchée explicitement par l’étudiante à partir du titre et de l’artiste. L’API appelle MusicBrainz, conserve uniquement les releases pour lesquelles le Cover Art Archive indique une image de face, puis affiche des résultats attribués et sélectionnables. L’API valide l’URL de la source et sert ensuite l’image via l’endpoint authentifié de couverture.
+- L’interface permet de choisir une image locale ou un résultat public ; elle n’envoie pas les deux pour une même piste. Les images du catalogue peuvent rester soumises aux droits de leurs ayants droit.
+- **Présentation de la bibliothèque :** affichage des pistes sur une seule colonne pleine largeur afin d’éviter un grand espace vide lorsqu’une ligne contient une piste isolée, notamment avec un nombre impair de pistes.
+- Mise à jour du contrat HTTP dans `API_CONTRACT.md`.
+
+### Fichiers effectivement modifiés
+
+- `backend/src/app.js`
+- `backend/src/models/Track.js`
+- `backend/test/api.test.js`
+- `backend/package.json`
+- `backend/package-lock.json`
+- `frontend-starter/src/app/components/tracks-page/tracks-page.ts`
+- `frontend-starter/src/app/components/tracks-page/tracks-page.html`
+- `frontend-starter/src/app/components/tracks-page/tracks-page.css`
+- `frontend-starter/src/app/shared/models/track.model.ts`
+- `frontend-starter/src/app/shared/services/track.service.ts`
+- `frontend-starter/src/app/shared/services/track.service.spec.ts`
+- `frontend-starter/package.json`
+- `frontend-starter/package-lock.json`
+- `API_CONTRACT.md`
+
+### Vérifications réalisées
+
+| Vérification | Résultat observé |
+|---|---|
+| Tests frontend | 6 tests réussis, 0 échec. Ils couvrent la liste, la suppression, l’intercepteur, la recherche de couvertures et les champs multipart pour les couvertures locales et publiques. |
+| Build Angular après l’ajustement de la présentation | Réussi. Angular signale des avertissements d’optimisation liés aux dépendances CommonJS `debug` et `ieee754`, sans échec de compilation. |
+| Tests backend | 13 tests réussis, 0 échec, y compris la pagination par agrégation, la recherche MusicBrainz simulée, la récupération authentifiée des couvertures locales/distantes, le refus d’une image non autorisée et les tests de contrat/sécurité du TP3. |
+| Dépendances | L’installation de `music-metadata` et du plugin a produit des avertissements d’audit npm ; aucune correction automatique des vulnérabilités n’a été appliquée. |
+
+### Limite de validation
+
+Les appels externes à MusicBrainz et au Cover Art Archive sont simulés dans les tests backend ; la disponibilité réelle de ces services et l’affichage final des images doivent encore être vérifiés manuellement dans le navigateur. La recherche ne se déclenche que lorsque l’utilisateur clique sur le bouton et transmet le titre et l’artiste, pas le fichier audio.

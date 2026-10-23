@@ -2,13 +2,13 @@
 
 .tracks-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
 }
 
 .track-card {
   display: grid;
-  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+  grid-template-columns: 2.5rem 4rem minmax(0, 1fr) auto;
   align-items: start;
   gap: 0.75rem;
   min-width: 0;
@@ -17,6 +17,25 @@
   border-radius: 0.75rem;
   background: #fff;
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.track-cover,
+.track-cover-placeholder {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 0.5rem;
+}
+
+.track-cover {
+  object-fit: cover;
+}
+
+.track-cover-placeholder {
+  display: grid;
+  place-items: center;
+  background: #edf1ef;
+  color: #687771;
+  font-size: 1.7rem;
 }
 
 .track-card.is-playing {
@@ -42,6 +61,88 @@
   color: #687771;
   font-size: 0.8rem;
   overflow-wrap: anywhere;
+}
+
+.track-artist {
+  margin: 0.2rem 0 0;
+  color: #4d5c56;
+}
+
+.cover-attribution {
+  display: inline-block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
+
+.metadata-message,
+.cover-help {
+  margin: 0.35rem 0;
+  color: #687771;
+  font-size: 0.85rem;
+}
+
+.cover-picker {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 1rem 0;
+  padding: 0.75rem;
+  border: 1px solid #d6dfda;
+  border-radius: 0.65rem;
+}
+
+.cover-picker legend {
+  padding: 0 0.35rem;
+  font-weight: 700;
+}
+
+.cover-picker button {
+  justify-self: start;
+}
+
+.cover-preview img {
+  display: block;
+  width: 7rem;
+  height: 7rem;
+  margin-bottom: 0.5rem;
+  border-radius: 0.5rem;
+  object-fit: cover;
+}
+
+.cover-results {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.cover-result {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+}
+
+.cover-result img {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.25rem;
+  object-fit: cover;
+}
+
+.cover-result div {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.cover-result span {
+  overflow-wrap: anywhere;
+  color: #687771;
+  font-size: 0.78rem;
 }
 
 .track-metadata {
@@ -224,8 +325,16 @@ time.metadata-chip {
   max-width: 100%;
 }
 
-@media (max-width: 720px) {
-  .tracks-list {
-    grid-template-columns: minmax(0, 1fr);
+@media (max-width: 420px) {
+  .track-card {
+    grid-template-columns: 2.25rem 3.25rem minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    padding: 0.7rem;
+  }
+
+  .track-cover,
+  .track-cover-placeholder {
+    width: 3.25rem;
+    height: 3.25rem;
   }
 }

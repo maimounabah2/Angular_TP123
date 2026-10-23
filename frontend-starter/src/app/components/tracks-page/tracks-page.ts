@@ -5,7 +5,8 @@ import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatPaginatorIntl, MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
-import { Track } from '../../shared/models/track.model';
+import { parseBlob } from 'music-metadata';
+import { CoverSearchResult, Track } from '../../shared/models/track.model';
 import { TrackService } from '../../shared/services/track.service';
 
 const MAX_AUDIO_SIZE = 25 * 1024 * 1024;
@@ -18,6 +19,8 @@ const ALLOWED_AUDIO_TYPES = new Set([
   'audio/x-m4a',
 ]);
 const ALLOWED_AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a']);
+const MAX_COVER_SIZE = 5 * 1024 * 1024;
+const ALLOWED_COVER_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 function normalizeSearchText(value: string): string {
   return value
@@ -55,6 +58,10 @@ export class TracksPageComponent implements OnDestroy {
   private readonly service = inject(TrackService);
   private readonly snackBar = inject(MatSnackBar);
   private audioRequest?: Subscription;
+  private readonly coverRequests = new Set<Subscription>();
+  private readonly coverObjectUrls = new Map<string, string>();
+  private coverPreviewObjectUrl = '';
+  private coverFileInput?: HTMLInputElement;
   private successMessageTimer?: ReturnType<typeof setTimeout>;
 
   readonly tracks = signal<Track[]>([]);
@@ -76,18 +83,32 @@ export class TracksPageComponent implements OnDestroy {
   readonly uploadSuccess = signal('');
   readonly uploading = signal(false);
   readonly uploadProgress = signal<number | null>(null);
+  readonly coverSearchResults = signal<CoverSearchResult[]>([]);
+  readonly coverSearchLoading = signal(false);
+  readonly coverError = signal('');
+  readonly coverSearchMessage = signal('');
+  readonly selectedCover = signal<CoverSearchResult | null>(null);
+  readonly coverPreview = signal('');
+  readonly metadataMessage = signal('');
   readonly deletingTrackId = signal<string | null>(null);
   readonly audioUrl = signal('');
   readonly currentTrack = signal<Track | null>(null);
   readonly audioLoading = signal(false);
   readonly audioError = signal('');
   readonly title = new FormControl('', { nonNullable: true });
+  readonly artist = new FormControl('', { nonNullable: true });
   file?: File;
+  coverFile?: File;
   private fileInput?: HTMLInputElement;
 
   @ViewChild('trackFilterInput')
   set trackFilterInput(input: ElementRef<HTMLInputElement> | undefined) {
     input?.nativeElement.focus();
+  }
+
+  @ViewChild('coverFileInput')
+  set coverFileInputRef(input: ElementRef<HTMLInputElement> | undefined) {
+    this.coverFileInput = input?.nativeElement;
   }
 
   constructor() {
@@ -96,6 +117,9 @@ export class TracksPageComponent implements OnDestroy {
 
   choose(event: Event): void {
     this.clearActionMessages();
+    this.coverSearchResults.set([]);
+    this.coverSearchMessage.set('');
+    if (this.selectedCover()) this.clearCoverSelection();
     const input = event.target as HTMLInputElement;
     this.fileInput = input;
     const selectedFile = input.files?.[0];
@@ -114,15 +138,141 @@ export class TracksPageComponent implements OnDestroy {
     }
 
     this.file = selectedFile;
+    this.metadataMessage.set('Lecture des métadonnées audio…');
+    void this.readAudioMetadata(selectedFile);
+  }
+
+  private async readAudioMetadata(file: File): Promise<void> {
+    const fallbackTitle =
+      file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || file.name;
+    try {
+      const metadata = await parseBlob(file, { skipCovers: true });
+      if (this.file !== file) return;
+      if (!this.title.value.trim()) {
+        this.title.setValue(metadata.common.title?.trim() || fallbackTitle);
+      }
+      if (!this.artist.value.trim() && metadata.common.artist) {
+        this.artist.setValue(metadata.common.artist);
+      }
+      this.metadataMessage.set(
+        metadata.common.title || metadata.common.artist
+          ? 'Métadonnées lues depuis les tags audio.'
+          : 'Aucun tag titre/artiste trouvé ; le nom du fichier est proposé comme titre.',
+      );
+    } catch (error) {
+      if (this.file !== file) return;
+      if (!this.title.value.trim()) this.title.setValue(fallbackTitle);
+      this.metadataMessage.set(
+        'Les tags audio n’ont pas pu être lus ; le nom du fichier est proposé comme titre.',
+      );
+      console.warn(
+        '[TracksPage] Lecture des métadonnées audio impossible:',
+        error instanceof Error ? error.message : 'erreur inconnue',
+      );
+    }
+  }
+
+  chooseCover(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const selectedFile = input.files?.[0];
+    this.coverError.set('');
+    this.coverSearchMessage.set('');
+    this.coverSearchResults.set([]);
+    this.selectedCover.set(null);
+
+    if (!selectedFile) {
+      this.coverFile = undefined;
+      this.clearCoverPreview();
+      this.coverPreview.set('');
+      return;
+    }
+
+    if (!ALLOWED_COVER_TYPES.has(selectedFile.type)) {
+      input.value = '';
+      this.coverFile = undefined;
+      this.clearCoverPreview();
+      this.coverPreview.set('');
+      this.coverError.set('Format de couverture non accepté. Choisissez JPEG, PNG ou WebP.');
+      return;
+    }
+    if (selectedFile.size > MAX_COVER_SIZE) {
+      input.value = '';
+      this.coverFile = undefined;
+      this.clearCoverPreview();
+      this.coverPreview.set('');
+      this.coverError.set('La couverture ne doit pas dépasser 5 Mo.');
+      return;
+    }
+
+    this.coverFile = selectedFile;
+    this.clearCoverPreview();
+    this.coverPreviewObjectUrl = URL.createObjectURL(selectedFile);
+    this.coverPreview.set(this.coverPreviewObjectUrl);
+  }
+
+  searchCovers(): void {
+    this.coverError.set('');
+    this.coverSearchMessage.set('');
+    const title = this.title.value.trim();
+    const artist = this.artist.value.trim();
+    if (title.length < 2) {
+      this.coverError.set('Saisissez un titre d’au moins 2 caractères pour rechercher une pochette.');
+      return;
+    }
+
+    this.coverSearchLoading.set(true);
+    this.coverSearchResults.set([]);
+    this.service.searchCovers(title, artist).subscribe({
+      next: (response) => {
+        this.coverSearchResults.set(response.items);
+        this.coverSearchMessage.set(
+          response.items.length
+            ? `${response.items.length} résultat(s) avec pochette.`
+            : 'Aucune pochette trouvée. Vous pouvez choisir une image sur votre appareil.',
+        );
+        this.coverSearchLoading.set(false);
+      },
+      error: (error: HttpErrorResponse) => {
+        this.coverError.set(
+          error.error?.message || 'La recherche de pochette a échoué. Réessayez plus tard.',
+        );
+        this.coverSearchLoading.set(false);
+      },
+    });
+  }
+
+  selectCover(result: CoverSearchResult): void {
+    this.coverFile = undefined;
+    this.clearCoverPreview();
+    this.coverPreview.set(result.coverUrl);
+    this.selectedCover.set(result);
+    if (this.coverFileInput) this.coverFileInput.value = '';
+  }
+
+  clearCoverSelection(): void {
+    this.coverFile = undefined;
+    this.selectedCover.set(null);
+    this.clearCoverPreview();
+    this.coverPreview.set('');
+    if (this.coverFileInput) this.coverFileInput.value = '';
+  }
+
+  private clearCoverPreview(): void {
+    if (this.coverPreviewObjectUrl) {
+      URL.revokeObjectURL(this.coverPreviewObjectUrl);
+      this.coverPreviewObjectUrl = '';
+    }
   }
 
   load(): void {
+    this.clearTrackCoverUrls();
     this.loading.set(true);
     this.loadError.set('');
     this.service.list(this.page(), this.limit()).subscribe({
       next: (response) => {
         console.debug('[TracksPage] Pistes chargées', response.items.length);
         this.tracks.set(response.items);
+        this.loadTrackCovers(response.items);
         this.total.set(response.total);
         this.loading.set(false);
       },
@@ -154,6 +304,18 @@ export class TracksPageComponent implements OnDestroy {
 
   onTitleInput(): void {
     this.clearActionMessages();
+    this.invalidateCoverSearch();
+  }
+
+  onArtistInput(): void {
+    this.clearActionMessages();
+    this.invalidateCoverSearch();
+  }
+
+  private invalidateCoverSearch(): void {
+    this.coverSearchResults.set([]);
+    this.coverSearchMessage.set('');
+    if (this.selectedCover()) this.clearCoverSelection();
   }
 
   toggleFilter(): void {
@@ -233,7 +395,15 @@ export class TracksPageComponent implements OnDestroy {
 
     this.uploading.set(true);
     this.uploadProgress.set(null);
-    this.service.upload(this.file, this.title.value || this.file.name).subscribe({
+    this.service
+      .upload(
+        this.file,
+        this.title.value || this.file.name,
+        this.artist.value,
+        this.coverFile,
+        this.selectedCover()?.coverUrl,
+      )
+      .subscribe({
       next: (event) => {
         if (event.type === HttpEventType.UploadProgress) {
           this.uploadProgress.set(
@@ -255,8 +425,12 @@ export class TracksPageComponent implements OnDestroy {
 
           console.debug('[TracksPage] Piste envoyée', track.id);
           this.title.setValue('');
+          this.artist.setValue('');
           this.file = undefined;
+          this.coverFile = undefined;
           if (this.fileInput) this.fileInput.value = '';
+          this.clearCoverSelection();
+          this.metadataMessage.set('');
           this.showUploadSuccessMessage('Le fichier audio a été envoyé avec succès.');
           this.uploading.set(false);
           this.uploadProgress.set(null);
@@ -271,7 +445,7 @@ export class TracksPageComponent implements OnDestroy {
         this.uploading.set(false);
         this.uploadProgress.set(null);
       },
-    });
+      });
   }
 
   private getUploadErrorMessage(error: HttpErrorResponse): string {
@@ -372,6 +546,8 @@ export class TracksPageComponent implements OnDestroy {
   ngOnDestroy(): void {
     this.clearSuccessMessageTimer();
     this.audioRequest?.unsubscribe();
+    this.clearTrackCoverUrls();
+    this.clearCoverPreview();
     const currentUrl = this.audioUrl();
     if (currentUrl) URL.revokeObjectURL(currentUrl);
   }
@@ -414,6 +590,47 @@ export class TracksPageComponent implements OnDestroy {
     if (currentUrl) URL.revokeObjectURL(currentUrl);
     this.audioUrl.set('');
     this.currentTrack.set(null);
+  }
+
+  private loadTrackCovers(tracks: Track[]): void {
+    for (const track of tracks) {
+      if (!track.coverUrl?.startsWith('/api/tracks/')) continue;
+      const request = this.service.cover(track.id).subscribe({
+        next: (blob) => {
+          const objectUrl = URL.createObjectURL(blob);
+          this.coverObjectUrls.set(track.id, objectUrl);
+          this.tracks.update((current) =>
+            current.map((item) =>
+              item.id === track.id ? { ...item, coverUrl: objectUrl } : item,
+            ),
+          );
+          this.coverRequests.delete(request);
+        },
+        error: (error: HttpErrorResponse) => {
+          console.warn(
+            `[TracksPage] Couverture indisponible pour ${track.id} (HTTP ${error.status}).`,
+          );
+          this.coverRequests.delete(request);
+        },
+      });
+      this.coverRequests.add(request);
+    }
+  }
+
+  private clearTrackCoverUrls(): void {
+    for (const request of this.coverRequests) request.unsubscribe();
+    this.coverRequests.clear();
+    for (const objectUrl of this.coverObjectUrls.values()) {
+      URL.revokeObjectURL(objectUrl);
+    }
+    this.coverObjectUrls.clear();
+    this.tracks.update((current) =>
+      current.map((track) =>
+        track.coverUrl?.startsWith('blob:')
+          ? { ...track, coverUrl: `/api/tracks/${track.id}/cover` }
+          : track,
+      ),
+    );
   }
 
   private getAudioErrorMessage(error: HttpErrorResponse): string {

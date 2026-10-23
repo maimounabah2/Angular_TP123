@@ -29,9 +29,9 @@ const SECRET = process.env.JWT_SECRET || "tp1-development-secret";
 // La taille maximale d'un fichier audio est de 25 Mo. Les fichiers plus gros
 // sont refusés par Multer avant d'être écrits sur le disque.
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const MAX_COVER_SIZE = 5 * 1024 * 1024;
 
-// Les types MIME autorisés correspondent aux formats demandés dans le sujet.
-const allowed = new Set([
+const allowedAudioTypes = new Set([
   "audio/mpeg",
   "audio/wav",
   "audio/x-wav",
@@ -39,6 +39,48 @@ const allowed = new Set([
   "audio/mp4",
   "audio/x-m4a",
 ]);
+const allowedCoverTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const coverExtensions = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+};
+const coverArtHost = "coverartarchive.org";
+const releaseIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function removeUploadedFiles(files) {
+  for (const file of files) {
+    try {
+      await fsPromises.unlink(file.path);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        console.error(`[uploads] Impossible de supprimer ${file.path}`, error);
+        throw error;
+      }
+    }
+  }
+}
+
+function isAllowedCoverUrl(value) {
+  try {
+    const url = new URL(value);
+    const releaseMatch = /^\/release\/([0-9a-f-]+)\/front-250$/i.exec(url.pathname);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === coverArtHost &&
+      !url.port &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      !!releaseMatch &&
+      releaseIdPattern.test(releaseMatch[1])
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Crée un jeton JWT contenant uniquement l'identité nécessaire à l'API.
@@ -91,8 +133,11 @@ const storage = multer.diskStorage({
     callback(null, UPLOADS);
   },
   filename: (_request, file, callback) => {
-    const filename =
-      crypto.randomUUID() + path.extname(file.originalname).toLowerCase();
+    const extension =
+      file.fieldname === "cover"
+        ? coverExtensions[file.mimetype]
+        : path.extname(file.originalname).toLowerCase();
+    const filename = crypto.randomUUID() + extension;
     console.log(`[multer] Nom de stockage généré pour ${file.originalname}`);
     callback(null, filename);
   },
@@ -105,15 +150,21 @@ const storage = multer.diskStorage({
  */
 const upload = multer({
   storage,
-  limits: { fileSize: MAX_FILE_SIZE },
+  limits: { fileSize: MAX_FILE_SIZE, files: 2 },
   fileFilter: (_request, file, callback) => {
-    // Seuls les types MIME audio demandés dans le sujet sont acceptés.
-    if (allowed.has(file.mimetype)) {
+    const accepted =
+      (file.fieldname === "audio" && allowedAudioTypes.has(file.mimetype)) ||
+      (file.fieldname === "cover" && allowedCoverTypes.has(file.mimetype));
+    if (accepted) {
       console.log(`[multer] Type accepté : ${file.mimetype}`);
       return callback(null, true);
     }
 
-    const error = new Error("Format audio non accepté");
+    const error = new Error(
+      file.fieldname === "cover"
+        ? "Format de couverture non accepté"
+        : "Format audio non accepté",
+    );
     console.error(`[multer] Type refusé : ${file.mimetype}`, error);
     return callback(error);
   },
@@ -124,8 +175,28 @@ const upload = multer({
  * Cette séparation permet au serveur réel et aux tests de créer la même
  * application. Le port est ouvert uniquement dans server.js.
  */
-export function createApp() {
+export function createApp({ fetchImpl = globalThis.fetch } = {}) {
   const app = express();
+  const coverSearchCache = new Map();
+  let lastMusicBrainzRequestAt = 0;
+  let musicBrainzQueue = Promise.resolve();
+
+  const fetchMusicBrainz = async (url, options) => {
+    let releaseQueue;
+    const previousRequest = musicBrainzQueue;
+    musicBrainzQueue = new Promise((resolve) => {
+      releaseQueue = resolve;
+    });
+    await previousRequest;
+    try {
+      const delay = Math.max(0, 1000 - (Date.now() - lastMusicBrainzRequestAt));
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      lastMusicBrainzRequestAt = Date.now();
+      return await fetchImpl(url, options);
+    } finally {
+      releaseQueue();
+    }
+  };
 
   // Journaliser la fin de chaque requête permet de suivre méthode, URL,
   // statut et durée sans exposer les corps contenant des mots de passe.
@@ -153,6 +224,79 @@ export function createApp() {
   app.get("/api/health", (_req, res) => {
     console.log("[health] Vérification de l'API");
     res.json({ status: "ok" });
+  });
+
+  app.get("/api/tracks/cover-search", auth, async (req, res) => {
+    const title = String(req.query.title || "").trim();
+    const artist = String(req.query.artist || "").trim();
+    if (title.length < 2 || title.length > 120 || artist.length > 120) {
+      return res.status(400).json({
+        message: "Indiquez un titre valide et un artiste de 120 caractères maximum.",
+      });
+    }
+
+    const cacheKey = `${title.toLocaleLowerCase()}|${artist.toLocaleLowerCase()}`;
+    const cached = coverSearchCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return res.json({ items: cached.items });
+    }
+    for (const [key, entry] of coverSearchCache) {
+      if (entry.expiresAt <= Date.now()) coverSearchCache.delete(key);
+    }
+    if (coverSearchCache.size >= 100) {
+      coverSearchCache.delete(coverSearchCache.keys().next().value);
+    }
+
+    try {
+      const escapeLucene = (value) =>
+        value.replace(/([+\-!(){}[\]^"~*?:\\/])/g, "\\$1");
+      const terms = [`release:"${escapeLucene(title)}"`];
+      if (artist) terms.push(`artist:"${escapeLucene(artist)}"`);
+      const searchUrl = new URL("https://musicbrainz.org/ws/2/release/");
+      searchUrl.searchParams.set("query", terms.join(" AND "));
+      searchUrl.searchParams.set("fmt", "json");
+      searchUrl.searchParams.set("limit", "10");
+
+      const response = await fetchMusicBrainz(searchUrl, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "GuitarPracticeCloud/1.0 (student project)",
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) {
+        console.error(`[cover-search] MusicBrainz returned ${response.status}`);
+        return res.status(502).json({
+          message: "Le catalogue musical est momentanément indisponible.",
+        });
+      }
+
+      const payload = await response.json();
+      const items = (payload.releases || [])
+        .filter((release) => releaseIdPattern.test(release.id || "") &&
+          release["cover-art-archive"]?.front)
+        .map((release) => ({
+          releaseId: release.id,
+          title: release.title,
+          artist: (release["artist-credit"] || [])
+            .map((credit) => `${credit.name || credit.artist?.name || ""}${credit.joinphrase || ""}`)
+            .join(""),
+          date: release.date || "",
+          sourceUrl: `https://musicbrainz.org/release/${release.id}`,
+          coverUrl: `https://${coverArtHost}/release/${release.id}/front-250`,
+        }));
+
+      coverSearchCache.set(cacheKey, {
+        items,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
+      res.json({ items });
+    } catch (error) {
+      console.error("[cover-search] Recherche du catalogue impossible", error);
+      res.status(502).json({
+        message: "La recherche de couverture a échoué. Réessayez plus tard.",
+      });
+    }
   });
 
   /** Requête POST pour "insertion" de donnée.
@@ -276,34 +420,45 @@ export function createApp() {
 
       console.log(`[tracks] Lecture page=${page}, limit=${limit}, user=${req.auth.sub}`);
 
-      // La lecture des pistes et le comptage total sont parallélisés pour réduire la latence.
-      // on utilise Promise.all pour exécuter les deux opérations en parallèle. 
-      // Track.find() récupère les pistes de l'utilisateur avec pagination, 
-      // tandis que Track.countDocuments() compte le nombre total de pistes pour cet utilisateur.
-      // Promise.all attend que les deux opérations soient terminées avant de continuer et les résultats
-        // sont stockés dans les variables items et total.
-      const [items, total] = await Promise.all([
-        Track.find(filter)
-          .sort({ createdAt: -1 })
-          .skip((page - 1) * limit)
-          .limit(limit)
-          .select("-storedName")
-          .lean(),
-        Track.countDocuments(filter),
-      ]);
+      const result = await Track.aggregatePaginate(
+        Track.aggregate([
+          { $match: filter },
+          { $sort: { createdAt: -1 } },
+          {
+            $project: {
+              _id: 1,
+              ownerId: 1,
+              title: 1,
+              artist: 1,
+              originalName: 1,
+              mimeType: 1,
+              size: 1,
+              createdAt: 1,
+              coverStoredName: 1,
+              coverSourceUrl: 1,
+            },
+          },
+        ]),
+        { page, limit },
+      );
 
-      // items.map(track) crée un nouveau tableau publicItems en transformant chaque piste pour inclure 
-      // uniquement les champs nécessaires à l'API.
-      // L'identifiant MongoDB (_id) est converti en chaîne de caractères (id) pour être plus lisible 
-      // côté frontend.
-      // Le champ _id (généré par MongoDB) est supprimé pour éviter de l'exposer dans la réponse JSON.
-      const publicItems = items.map((track) => ({
-        ...track,
-        id: String(track._id),
-        _id: undefined,
-      }));
+      const publicItems = result.docs.map((track) => {
+        const id = String(track._id);
+        return {
+          ...track,
+          id,
+          coverUrl: track.coverStoredName || track.coverSourceUrl
+            ? `/api/tracks/${id}/cover`
+            : null,
+          coverSourceUrl: track.coverSourceUrl || null,
+          _id: undefined,
+          coverStoredName: undefined,
+        };
+      });
 
-      console.log(`[tracks] ${publicItems.length} piste(s) envoyée(s) sur ${total}`);
+      console.log(
+        `[tracks] ${publicItems.length} piste(s) envoyée(s) sur ${result.totalDocs}`,
+      );
 
       // envoi de la réponse JSON avec les pistes publiques, la page actuelle, la limite par page, 
       // le nombre total de pistes et le nombre total de pages.
@@ -311,8 +466,8 @@ export function createApp() {
         items: publicItems,
         page,
         limit,
-        total,
-        pages: Math.max(1, Math.ceil(total / limit)),
+        total: result.totalDocs,
+        pages: result.totalPages,
       });
     } catch (error) {
       console.error("[tracks] Erreur de pagination", error);
@@ -334,21 +489,59 @@ export function createApp() {
   app.post(
     "/api/tracks",
     auth,
-    upload.single("audio"),
+    (req, res, next) => {
+      upload.fields([
+        { name: "audio", maxCount: 1 },
+        { name: "cover", maxCount: 1 },
+      ])(req, res, (error) => {
+        if (!error) return next();
+        const files = Object.values(req.files || {}).flat();
+        removeUploadedFiles(files)
+          .then(() => next(error))
+          .catch(next);
+      });
+    },
     async (req, res, next) => {
+      const audioFile = req.files?.audio?.[0];
+      const coverFile = req.files?.cover?.[0];
+      const uploadedFiles = [audioFile, coverFile].filter(Boolean);
+
       try {
-        if (!req.file) {
+        if (!audioFile) {
           console.warn(`[tracks] Upload sans fichier par ${req.auth.sub}`);
+          await removeUploadedFiles(uploadedFiles);
           return res.status(400).json({ message: "Fichier audio requis" });
+        }
+
+        if (coverFile && coverFile.size > MAX_COVER_SIZE) {
+          await removeUploadedFiles(uploadedFiles);
+          return res.status(400).json({
+            message: "La couverture ne doit pas dépasser 5 Mo.",
+          });
+        }
+
+        const coverSourceUrl = String(req.body.coverUrl || "").trim();
+        if (
+          (coverFile && coverSourceUrl) ||
+          (coverSourceUrl && !isAllowedCoverUrl(coverSourceUrl))
+        ) {
+          await removeUploadedFiles(uploadedFiles);
+          return res.status(400).json({
+            message: "Choisissez une seule couverture provenant d’une source acceptée.",
+          });
         }
 
         const track = await Track.create({
           ownerId: req.auth.sub,
-          title: req.body.title || req.file.originalname,
-          originalName: req.file.originalname,
-          storedName: req.file.filename,
-          mimeType: req.file.mimetype,
-          size: req.file.size,
+          title: req.body.title || audioFile.originalname,
+          artist: String(req.body.artist || "").trim(),
+          originalName: audioFile.originalname,
+          storedName: audioFile.filename,
+          mimeType: audioFile.mimetype,
+          size: audioFile.size,
+          coverStoredName: coverFile?.filename,
+          coverMimeType: coverFile?.mimetype,
+          coverSourceUrl,
         });
 
         console.log(`[tracks] Upload enregistré : ${track.id}`);
@@ -358,22 +551,86 @@ export function createApp() {
 
         // Si MongoDB échoue après l'écriture sur disque, on tente de nettoyer
         // le fichier orphelin. L'erreur de nettoyage est elle aussi loguée.
-        if (req.file) {
-          const uploadedPath = path.join(UPLOADS, req.file.filename);
-          try {
-            await fsPromises.unlink(uploadedPath);
-            console.log(`[tracks] Fichier temporaire supprimé : ${uploadedPath}`);
-          } catch (cleanupError) {
-            console.error(
-              `[tracks] Impossible de supprimer le fichier temporaire ${uploadedPath}`,
-              cleanupError,
-            );
-          }
+        try {
+          await removeUploadedFiles(uploadedFiles);
+        } catch (cleanupError) {
+          console.error("[tracks] Nettoyage des fichiers temporaires impossible", cleanupError);
         }
         next(error);
       }
     },
   );
+
+  app.get("/api/tracks/:id/cover", auth, async (req, res, next) => {
+    try {
+      const track = await Track.findOne({
+        _id: req.params.id,
+        ownerId: req.auth.sub,
+      }).select("+coverStoredName +coverMimeType");
+
+      if (!track) {
+        return res.status(404).json({ message: "Couverture inconnue" });
+      }
+
+      if (track.coverStoredName && track.coverMimeType) {
+        res.type(track.coverMimeType);
+        return res.sendFile(path.join(UPLOADS, track.coverStoredName), (error) => {
+          if (error) {
+            console.error(`[tracks] Erreur d’envoi de la couverture ${track.id}`, error);
+            if (!res.headersSent) next(error);
+          }
+        });
+      }
+
+      if (!isAllowedCoverUrl(track.coverSourceUrl || "")) {
+        return res.status(404).json({ message: "Couverture inconnue" });
+      }
+
+      try {
+        const upstream = await fetchImpl(track.coverSourceUrl, {
+          headers: { "User-Agent": "GuitarPracticeCloud/1.0 (student project)" },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!upstream.ok) {
+          console.warn(`[tracks] Cover Art Archive returned ${upstream.status}`);
+          return res.status(502).json({ message: "La couverture distante est indisponible." });
+        }
+        const mimeType = upstream.headers.get("content-type")?.split(";")[0] || "";
+        const contentLength = Number(upstream.headers.get("content-length") || 0);
+        if (!allowedCoverTypes.has(mimeType) || contentLength > MAX_COVER_SIZE) {
+          return res.status(502).json({ message: "La couverture distante n’est pas valide." });
+        }
+
+        const reader = upstream.body?.getReader();
+        if (!reader) {
+          return res.status(502).json({ message: "La couverture distante est vide." });
+        }
+        const chunks = [];
+        let imageSize = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          imageSize += value.byteLength;
+          if (imageSize > MAX_COVER_SIZE) {
+            await reader.cancel();
+            return res.status(502).json({
+              message: "La couverture distante est trop volumineuse.",
+            });
+          }
+          chunks.push(Buffer.from(value));
+        }
+        const image = Buffer.concat(chunks, imageSize);
+        res.setHeader("Cache-Control", "private, max-age=3600");
+        res.type(mimeType).send(image);
+      } catch (error) {
+        console.error("[tracks] Récupération de la couverture distante impossible", error);
+        res.status(502).json({ message: "La couverture distante est momentanément indisponible." });
+      }
+    } catch (error) {
+      console.error("[tracks] Erreur de préparation de la couverture", error);
+      next(error);
+    }
+  });
 
   /** Envoie le contenu binaire d'une piste après vérification de sa propriété. */
   app.get("/api/tracks/:id/audio", auth, async (req, res, next) => {
@@ -411,7 +668,7 @@ export function createApp() {
       const track = await Track.findOneAndDelete({
         _id: req.params.id,
         ownerId: req.auth.sub,
-      }).select("+storedName");
+      }).select("+storedName +coverStoredName");
 
       if (!track) {
         console.warn(`[tracks] Suppression impossible : ${req.params.id}`);
@@ -419,15 +676,21 @@ export function createApp() {
       }
 
       const audioPath = path.join(UPLOADS, track.storedName);
+      const coverPath = track.coverStoredName
+        ? path.join(UPLOADS, track.coverStoredName)
+        : undefined;
       try {
-        await fsPromises.unlink(audioPath);
-        console.log(`[tracks] Fichier supprimé : ${audioPath}`);
+        await removeUploadedFiles([
+          { path: audioPath },
+          ...(coverPath ? [{ path: coverPath }] : []),
+        ]);
+        console.log(`[tracks] Fichiers de piste supprimés : ${track.id}`);
       } catch (error) {
         // L'exception n'est volontairement pas ignorée : l'administrateur doit
         // voir ce fichier orphelin si sa suppression échoue.
         console.error(`[tracks] Fichier audio non supprimé : ${audioPath}`, error);
         return res.status(500).json({
-          message: "Métadonnée supprimée, mais fichier audio non supprimé",
+          message: "Métadonnées supprimées, mais un fichier associé n’a pas été supprimé",
         });
       }
 
@@ -444,7 +707,8 @@ export function createApp() {
 
     if (
       error instanceof multer.MulterError ||
-      error?.message === "Format audio non accepté"
+      error?.message === "Format audio non accepté" ||
+      error?.message === "Format de couverture non accepté"
     ) {
       return res.status(400).json({ message: error.message });
     }

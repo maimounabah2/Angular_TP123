@@ -1,7 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Page } from '../models/page.model';
-import { Track } from '../models/track.model';
+import { CoverSearchResult, Track } from '../models/track.model';
 
 /** Encapsulates all HTTP operations for backing tracks. */
 @Injectable({ providedIn: 'root' })
@@ -14,13 +14,35 @@ export class TrackService {
     });
   }
 
-  upload(file: File, title: string) {
+  upload(
+    file: File,
+    title: string,
+    artist: string,
+    coverFile?: File,
+    coverUrl?: string,
+  ) {
     const body = new FormData();
     body.append('audio', file);
     body.append('title', title);
+    body.append('artist', artist);
+    if (coverFile) body.append('cover', coverFile);
+    if (coverUrl) body.append('coverUrl', coverUrl);
     return this.http.post<Track>('/api/tracks', body, {
       observe: 'events',
       reportProgress: true,
+    });
+  }
+
+  searchCovers(title: string, artist: string) {
+    return this.http.get<{ items: CoverSearchResult[] }>(
+      '/api/tracks/cover-search',
+      { params: { title, artist } },
+    );
+  }
+
+  cover(id: string) {
+    return this.http.get(`/api/tracks/${id}/cover`, {
+      responseType: 'blob',
     });
   }
 

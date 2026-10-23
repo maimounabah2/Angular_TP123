@@ -13,6 +13,10 @@
         <input [formControl]="title" [disabled]="uploading()" (input)="onTitleInput()" />
       </label>
       <label>
+        Artiste
+        <input [formControl]="artist" [disabled]="uploading()" (input)="onArtistInput()" />
+      </label>
+      <label>
         Fichier audio
         <input
           type="file"
@@ -23,6 +27,61 @@
           aria-describedby="upload-error"
         />
       </label>
+      @if (metadataMessage()) {
+        <p class="metadata-message" role="status">{{ metadataMessage() }}</p>
+      }
+      <fieldset class="cover-picker" [disabled]="uploading()">
+        <legend>Pochette</legend>
+        <label for="cover-file">Choisir une image sur cet appareil</label>
+        <input
+          #coverFileInput
+          id="cover-file"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          (change)="chooseCover($event)"
+        />
+        <p class="cover-help">JPEG, PNG ou WebP, 5 Mo maximum.</p>
+        <button
+          type="button"
+          (click)="searchCovers()"
+          [disabled]="uploading() || coverSearchLoading()"
+        >
+          {{ coverSearchLoading() ? 'Recherche…' : 'Rechercher une pochette en ligne' }}
+        </button>
+        <p class="cover-help">
+          La recherche envoie le titre et l’artiste au catalogue public MusicBrainz.
+          Les droits des images restent ceux de leurs ayants droit.
+        </p>
+        @if (coverSearchMessage()) {
+          <p role="status">{{ coverSearchMessage() }}</p>
+        }
+        @if (coverError()) {
+          <p class="error" role="alert">{{ coverError() }}</p>
+        }
+        @if (coverPreview()) {
+          <div class="cover-preview">
+            <img [src]="coverPreview()" alt="Aperçu de la pochette sélectionnée" referrerpolicy="no-referrer" />
+            <button type="button" (click)="clearCoverSelection()">Retirer la pochette</button>
+          </div>
+        }
+        @if (coverSearchResults().length > 0) {
+          <div class="cover-results" aria-label="Pochettes trouvées">
+            @for (result of coverSearchResults(); track result.releaseId) {
+              <article class="cover-result">
+                <img [src]="result.coverUrl" [alt]="'Pochette de ' + result.title" referrerpolicy="no-referrer" />
+                <div>
+                  <strong>{{ result.title }}</strong>
+                  <span>{{ result.artist }}@if (result.date) { · {{ result.date }} }</span>
+                  <a [href]="result.sourceUrl" target="_blank" rel="noopener noreferrer">
+                    Source : MusicBrainz / Cover Art Archive
+                  </a>
+                </div>
+                <button type="button" (click)="selectCover(result)">Choisir</button>
+              </article>
+            }
+          </div>
+        }
+      </fieldset>
       @if (uploading()) {
         @if (uploadProgress() !== null) {
           <label class="upload-progress" for="upload-progress">
@@ -113,8 +172,29 @@
                 [attr.aria-label]="'Lire ' + track.title"
                 [attr.aria-pressed]="currentTrack()?.id === track.id"
               >▶</button>
+              @if (track.coverUrl) {
+                <img
+                  class="track-cover"
+                  [src]="track.coverUrl"
+                  [alt]="'Pochette de ' + track.title"
+                  referrerpolicy="no-referrer"
+                />
+              } @else {
+                <div class="track-cover-placeholder" aria-hidden="true">♪</div>
+              }
               <div class="track-info">
                 <h3>{{ track.title }}</h3>
+                @if (track.artist) {
+                  <p class="track-artist">{{ track.artist }}</p>
+                }
+                @if (track.coverSourceUrl) {
+                  <a
+                    class="cover-attribution"
+                    [href]="track.coverSourceUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >Source de la pochette : Cover Art Archive</a>
+                }
                 @if (track.originalName !== track.title) {
                   <p class="track-filename">{{ track.originalName }}</p>
                 }
